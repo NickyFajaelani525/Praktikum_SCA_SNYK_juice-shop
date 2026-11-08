@@ -10,7 +10,6 @@ pipeline {
     environment {
         SNYK_IMAGE = 'snyk/snyk:node'
         NODE_IMAGE = 'node:24-alpine'
-        SNYK_BLOCKER = 'false'
     }
 
     stages {
@@ -43,64 +42,63 @@ pipeline {
             }
         }
 
-	stage('Snyk SCA Scan') {
-	    steps {
-		script {
-		    withCredentials([
-		        string(
-		            credentialsId: 'snyk-token',
-		            variable: 'SNYK_TOKEN'
-		        )
-		    ]) {
+        stage('Snyk SCA Scan') {
+            steps {
+                script {
+                    withCredentials([
+                        string(
+                            credentialsId: 'snyk-token',
+                            variable: 'SNYK_TOKEN'
+                        )
+                    ]) {
 
-		        // Verify Snyk CLI
-		        sh '''
-		            set +x
+                        // Verify Snyk CLI
+                        sh '''
+                            set +x
 
-		            docker run --rm \
-		              -e SNYK_TOKEN \
-		              -v "/var/lib/docker/volumes/jenkins_home/_data/workspace/Pipeline_SCA_SNYK:/app" \
-		              -w /app \
-		              "$SNYK_IMAGE" \
-		              snyk --version
-		        '''
+                            docker run --rm \
+                              -e SNYK_TOKEN \
+                              -v "/var/lib/docker/volumes/jenkins_home/_data/workspace/Pipeline_SCA_SNYK:/app" \
+                              -w /app \
+                              "$SNYK_IMAGE" \
+                              snyk --version
+                        '''
 
-		        // Run SCA scan
-		        int status = sh(
-		            returnStatus: true,
-		            script: '''
-		                set +x
-		                set +e
+                        // Scan all severity levels
+                        int status = sh(
+                            returnStatus: true,
+                            script: '''
+                                set +x
+                                set +e
 
-		                docker run --rm \
-		                  -e SNYK_TOKEN \
-		                  -v "/var/lib/docker/volumes/jenkins_home/_data/workspace/Pipeline_SCA_SNYK:/app" \
-		                  -w /app \
-		                  "$SNYK_IMAGE" \
-		                  snyk test \
-		                  --json-file-output=snyk-report.json \
-		                  > snyk-report.txt 2>&1
+                                docker run --rm \
+                                  -e SNYK_TOKEN \
+                                  -v "/var/lib/docker/volumes/jenkins_home/_data/workspace/Pipeline_SCA_SNYK:/app" \
+                                  -w /app \
+                                  "$SNYK_IMAGE" \
+                                  snyk test \
+                                  --json-file-output=snyk-report.json \
+                                  > snyk-report.txt 2>&1
 
-		                scan_status=$?
+                                scan_status=$?
 
-		                cat snyk-report.txt
+                                cat snyk-report.txt
 
-		                exit "$scan_status"
-		            '''
-		        )
+                                exit "$scan_status"
+                            '''
+                        )
 
-		        if (status == 0) {
-		            echo 'Snyk scan completed. No vulnerabilities found.'
-		        } else if (status == 1) {
-		            echo 'Vulnerabilities detected.'
-		            env.SNYK_BLOCKER = 'true'
-		        } else {
-		            error("Snyk scan failed. Exit code: ${status}")
-		        }
-		    }
-		}
-	    }
-	}
+                        if (status == 0) {
+                            echo 'Snyk scan completed. No vulnerabilities found.'
+                        } else if (status == 1) {
+                            echo 'Vulnerabilities detected. Proceeding to Security Gate.'
+                        } else {
+                            error("Snyk scan failed. Exit code: ${status}")
+                        }
+                    }
+                }
+            }
+        }
 
         stage('Generate SBOM') {
             steps {
@@ -162,14 +160,45 @@ pipeline {
         stage('Security Gate') {
             steps {
                 script {
-                    if (env.SNYK_BLOCKER == 'true') {
-                        error(
-                            'SECURITY GATE FAILED: HIGH/CRITICAL vulnerabilities detected.'
+                    withCredentials([
+                        string(
+                            credentialsId: 'snyk-token',
+                            variable: 'SNYK_TOKEN'
                         )
-                    }
+                    ]) {
 
-                    echo 'SECURITY GATE PASSED.'
-                    echo 'No HIGH/CRITICAL vulnerabilities detected.'
+                        // Block pipeline on all severity levels
+                        int gateStatus = sh(
+                            returnStatus: true,
+                            script: '''
+                                set +x
+                                set +e
+
+                                docker run --rm \
+                                  -e SNYK_TOKEN \
+                                  -v "/var/lib/docker/volumes/jenkins_home/_data/workspace/Pipeline_SCA_SNYK:/app" \
+                                  -w /app \
+                                  "$SNYK_IMAGE" \
+                                  snyk test \
+                                  --severity-threshold=low \
+                                  > snyk-gate-report.txt 2>&1
+
+                                scan_status=$?
+
+                                cat snyk-gate-report.txt
+
+                                exit "$scan_status"
+                            '''
+                        )
+
+                        if (gateStatus == 0) {
+                            echo 'SECURITY GATE PASSED: No vulnerabilities detected.'
+                        } else if (gateStatus == 1) {
+                            error('SECURITY GATE FAILED: Vulnerabilities detected (LOW to CRITICAL).')
+                        } else {
+                            error("Security Gate scan failed. Exit code: ${gateStatus}")
+                        }
+                    }
                 }
             }
         }
@@ -178,7 +207,7 @@ pipeline {
     post {
         always {
             archiveArtifacts(
-                artifacts: 'snyk-report.txt,snyk-report.json,sbom.json,sbom-snyk.log',
+                artifacts: 'snyk-report.txt,snyk-report.json,sbom.json,sbom-snyk.log,snyk-gate-report.txt',
                 allowEmptyArchive: true
             )
         }
