@@ -5,12 +5,13 @@ pipeline {
     options {
         timestamps()
         disableConcurrentBuilds()
-	skipDefaultCheckout(true)
+        skipDefaultCheckout(true)
     }
 
     environment {
         SNYK_IMAGE = 'snyk/snyk:node'
         NODE_IMAGE = 'node:24-alpine'
+        SNYK_BLOCKER = 'false'
     }
 
     stages {
@@ -20,20 +21,24 @@ pipeline {
                 echo 'Workspace cleaned.'
             }
         }
-        
+
         stage('Checkout SCM') {
             steps {
                 checkout scm
                 echo 'Source code checked out.'
             }
         }
-    
+
         stage('Preflight Check') {
             steps {
                 sh '''
+                    echo "Checking Docker connection..."
                     docker version
+
+                    echo "Checking project files..."
                     test -f package.json
                     test -f package-lock.json
+
                     echo "Preflight checks passed."
                 '''
             }
@@ -59,6 +64,7 @@ pipeline {
                                   -w /app \
                                   "$SNYK_IMAGE" \
                                   test \
+                                  --severity-threshold=high \
                                   --json-file-output=snyk-report.json \
                                   > snyk-report.txt 2>&1
 
@@ -67,10 +73,10 @@ pipeline {
                         )
 
                         if (status == 0) {
-                            echo 'No vulnerabilities found.'
+                            echo 'No HIGH/CRITICAL vulnerabilities found.'
                         } else if (status == 1) {
-                            echo 'Vulnerabilities detected.'
-                            currentBuild.result = 'UNSTABLE'
+                            echo 'HIGH/CRITICAL vulnerabilities detected.'
+                            env.SNYK_BLOCKER = 'true'
                         } else {
                             error("Snyk scan failed. Exit code: ${status}")
                         }
@@ -100,14 +106,16 @@ pipeline {
                                   "$SNYK_IMAGE" \
                                   sbom \
                                   --format=cyclonedx1.4+json \
-                                  --json-file-output=sbom.json
+                                  --json-file-output=sbom.json \
+                                  > sbom-snyk.log 2>&1
                             '''
                         )
 
                         if (snykStatus == 0) {
-                            echo 'SBOM generated using Snyk.'
+                            echo 'SBOM generated using Snyk CLI.'
                         } else {
-                            echo 'Snyk SBOM unavailable. Using CycloneDX npm fallback.'
+                            echo 'Snyk SBOM unavailable. Using CycloneDX npm.'
+                            sh 'cat sbom-snyk.log'
 
                             sh '''
                                 docker run --rm \
@@ -124,7 +132,27 @@ pipeline {
                                   '
                             '''
                         }
+
+                        sh '''
+                            test -s sbom.json
+                            echo "SBOM successfully generated."
+                        '''
                     }
+                }
+            }
+        }
+
+        stage('Security Gate') {
+            steps {
+                script {
+                    if (env.SNYK_BLOCKER == 'true') {
+                        error(
+                            'SECURITY GATE FAILED: HIGH/CRITICAL vulnerabilities detected.'
+                        )
+                    }
+
+                    echo 'SECURITY GATE PASSED.'
+                    echo 'No HIGH/CRITICAL vulnerabilities detected.'
                 }
             }
         }
@@ -133,9 +161,17 @@ pipeline {
     post {
         always {
             archiveArtifacts(
-                artifacts: 'snyk-report.txt,snyk-report.json,sbom.json',
+                artifacts: 'snyk-report.txt,snyk-report.json,sbom.json,sbom-snyk.log',
                 allowEmptyArchive: true
             )
+        }
+
+        success {
+            echo 'Pipeline completed successfully.'
+        }
+
+        failure {
+            echo 'Pipeline failed. Check the Console Output and archived reports.'
         }
     }
 }
