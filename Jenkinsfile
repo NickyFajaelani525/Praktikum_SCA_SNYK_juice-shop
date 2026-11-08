@@ -1,4 +1,3 @@
-
 pipeline {
     agent any
 
@@ -44,45 +43,50 @@ pipeline {
             }
         }
 
-        stage('Snyk SCA Scan') {
-            steps {
-                script {
-                    withCredentials([
-                        string(
-                            credentialsId: 'snyk-token',
-                            variable: 'SNYK_TOKEN'
-                        )
-                    ]) {
-                        int status = sh(
-                            returnStatus: true,
-                            script: '''
-                                set +x
+	stage('Snyk SCA Scan') {
+	    steps {
+		script {
+		    withCredentials([
+		        string(
+		            credentialsId: 'snyk-token',
+		            variable: 'SNYK_TOKEN'
+		        )
+		    ]) {
+		        int status = sh(
+		            returnStatus: true,
+		            script: '''
+		                set +x
+		                set +e
 
-                                docker run --rm \
-                                  -e SNYK_TOKEN \
-                                  -v "/var/lib/docker/volumes/jenkins_home/_data/workspace/Pipeline_SCA_SNYK:/app" \
-                                  -w /app \
-                                  "$SNYK_IMAGE" \
-                                  test \
-                                  --json-file-output=snyk-report.json \
-                                  > snyk-report.txt 2>&1
+		                docker run --rm \
+		                  -e SNYK_TOKEN \
+		                  -v "/var/lib/docker/volumes/jenkins_home/_data/workspace/Pipeline_SCA_SNYK:/app" \
+		                  -w /app \
+		                  "$SNYK_IMAGE" \
+		                  test \
+		                  --json-file-output=snyk-report.json \
+		                  > snyk-report.txt 2>&1
 
-                                cat snyk-report.txt
-                            '''
-                        )
+		                scan_status=$?
 
-                        if (status == 0) {
-                            echo 'No HIGH/CRITICAL vulnerabilities found.'
-                        } else if (status == 1) {
-                            echo 'HIGH/CRITICAL vulnerabilities detected.'
-                            env.SNYK_BLOCKER = 'true'
-                        } else {
-                            error("Snyk scan failed. Exit code: ${status}")
-                        }
-                    }
-                }
-            }
-        }
+		                cat snyk-report.txt
+
+		                exit "$scan_status"
+		            '''
+		        )
+
+		        if (status == 0) {
+		            echo 'No vulnerabilities found.'
+		        } else if (status == 1) {
+		            echo 'Vulnerabilities detected.'
+		            env.SNYK_BLOCKER = 'true'
+		        } else {
+		            error("Snyk scan failed. Exit code: ${status}")
+		        }
+		    }
+		}
+	    }
+	}
 
         stage('Generate SBOM') {
             steps {
