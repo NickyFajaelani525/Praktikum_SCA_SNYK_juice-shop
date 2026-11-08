@@ -19,6 +19,13 @@ pipeline {
                 echo 'Workspace cleaned.'
             }
         }
+        
+        stage('Checkout SCM') {
+            steps {
+                checkout scm
+                echo 'Source code checked out.'
+            }
+        }
     
         stage('Preflight Check') {
             steps {
