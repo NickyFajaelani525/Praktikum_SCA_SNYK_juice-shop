@@ -1,4 +1,3 @@
-
 pipeline {
     agent any
 
@@ -54,7 +53,7 @@ pipeline {
 		        )
 		    ]) {
 
-		        // Diagnostic sementara
+		        // Verify Snyk CLI
 		        sh '''
 		            set +x
 
@@ -63,27 +62,10 @@ pipeline {
 		              -v "/var/lib/docker/volumes/jenkins_home/_data/workspace/Pipeline_SCA_SNYK:/app" \
 		              -w /app \
 		              "$SNYK_IMAGE" \
-		              sh -c '
-		                echo "=== SNYK VERSION ==="
-		                snyk --version
-
-		                echo "=== WORKING DIRECTORY ==="
-		                pwd
-
-		                echo "=== PROJECT FILES ==="
-		                ls -lh package.json package-lock.json
-
-		                echo "=== PACKAGE INFORMATION ==="
-		                node -e "
-		                  const p = require(\"./package.json\");
-		                  console.log(\"Name:\", p.name);
-		                  console.log(\"Dependencies:\", Object.keys(p.dependencies || {}).length);
-		                  console.log(\"DevDependencies:\", Object.keys(p.devDependencies || {}).length);
-		                "
-		              '
+		              snyk --version
 		        '''
 
-		        // Snyk SCA Scan
+		        // Run SCA scan
 		        int status = sh(
 		            returnStatus: true,
 		            script: '''
@@ -95,18 +77,20 @@ pipeline {
 		                  -v "/var/lib/docker/volumes/jenkins_home/_data/workspace/Pipeline_SCA_SNYK:/app" \
 		                  -w /app \
 		                  "$SNYK_IMAGE" \
-		                  test \
+		                  snyk test \
 		                  --json-file-output=snyk-report.json \
 		                  > snyk-report.txt 2>&1
 
 		                scan_status=$?
+
 		                cat snyk-report.txt
+
 		                exit "$scan_status"
 		            '''
 		        )
 
 		        if (status == 0) {
-		            echo 'No vulnerabilities found.'
+		            echo 'Snyk scan completed. No vulnerabilities found.'
 		        } else if (status == 1) {
 		            echo 'Vulnerabilities detected.'
 		            env.SNYK_BLOCKER = 'true'
