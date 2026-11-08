@@ -65,7 +65,6 @@ pipeline {
                                   "$SNYK_IMAGE" \
                                   test \
                                   --severity-threshold=high \
-                                  --json-file-output=snyk-report.json \
                                   > snyk-report.txt 2>&1
 
                                 cat snyk-report.txt
