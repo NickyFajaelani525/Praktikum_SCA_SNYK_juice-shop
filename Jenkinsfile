@@ -60,7 +60,7 @@ pipeline {
 
                                 docker run --rm \
                                   -e SNYK_TOKEN \
-                                  -v "$WORKSPACE:/app" \
+                                  -v "/var/lib/docker/volumes/jenkins_home/_data/workspace/Pipeline_SCA_SNYK:/app" \
                                   -w /app \
                                   "$SNYK_IMAGE" \
                                   test \
@@ -100,7 +100,7 @@ pipeline {
 
                                 docker run --rm \
                                   -e SNYK_TOKEN \
-                                  -v "$WORKSPACE:/app" \
+                                  -v "/var/lib/docker/volumes/jenkins_home/_data/workspace/Pipeline_SCA_SNYK:/app" \
                                   -w /app \
                                   "$SNYK_IMAGE" \
                                   sbom \
