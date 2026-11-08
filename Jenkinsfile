@@ -118,7 +118,7 @@ pipeline {
 
                             sh '''
                                 docker run --rm \
-                                  -v "$WORKSPACE:/app" \
+                                  -v "/var/lib/docker/volumes/jenkins_home/_data/workspace/Pipeline_SCA_SNYK:/app" \
                                   -w /app \
                                   "$NODE_IMAGE" \
                                   sh -c '
