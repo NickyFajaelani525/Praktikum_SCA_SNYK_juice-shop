@@ -10,6 +10,8 @@ pipeline {
     environment {
         SNYK_IMAGE = 'snyk/snyk:node'
         NODE_IMAGE = 'node:24-alpine'
+        JUICE_SHOP_IMAGE = 'bkimminich/juice-shop:latest'
+        WORKSPACE_HOST = '/var/lib/docker/volumes/jenkins_home/_data/workspace/Pipeline_SCA_SNYK'
     }
 
     stages {
@@ -37,6 +39,9 @@ pipeline {
                     test -f package.json
                     test -f package-lock.json
 
+                    echo "Checking Juice Shop image..."
+                    docker image inspect "$JUICE_SHOP_IMAGE" > /dev/null
+
                     echo "Preflight checks passed."
                 '''
             }
@@ -52,19 +57,17 @@ pipeline {
                         )
                     ]) {
 
-                        // Verify Snyk CLI
                         sh '''
                             set +x
 
                             docker run --rm \
                               -e SNYK_TOKEN \
-                              -v "/var/lib/docker/volumes/jenkins_home/_data/workspace/Pipeline_SCA_SNYK:/app" \
+                              -v "$WORKSPACE_HOST:/app" \
                               -w /app \
                               "$SNYK_IMAGE" \
                               snyk --version
                         '''
 
-                        // Scan all severity levels
                         int status = sh(
                             returnStatus: true,
                             script: '''
@@ -73,7 +76,7 @@ pipeline {
 
                                 docker run --rm \
                                   -e SNYK_TOKEN \
-                                  -v "/var/lib/docker/volumes/jenkins_home/_data/workspace/Pipeline_SCA_SNYK:/app" \
+                                  -v "$WORKSPACE_HOST:/app" \
                                   -w /app \
                                   "$SNYK_IMAGE" \
                                   snyk test \
@@ -89,11 +92,11 @@ pipeline {
                         )
 
                         if (status == 0) {
-                            echo 'Snyk scan completed. No vulnerabilities found.'
+                            echo 'Snyk SCA scan completed. No vulnerabilities found.'
                         } else if (status == 1) {
-                            echo 'Vulnerabilities detected. Proceeding to Security Gate.'
+                            echo 'SCA vulnerabilities detected. Proceeding to Security Gate.'
                         } else {
-                            error("Snyk scan failed. Exit code: ${status}")
+                            error("Snyk SCA scan failed. Exit code: ${status}")
                         }
                     }
                 }
@@ -116,7 +119,7 @@ pipeline {
 
                                 docker run --rm \
                                   -e SNYK_TOKEN \
-                                  -v "/var/lib/docker/volumes/jenkins_home/_data/workspace/Pipeline_SCA_SNYK:/app" \
+                                  -v "$WORKSPACE_HOST:/app" \
                                   -w /app \
                                   "$SNYK_IMAGE" \
                                   sbom \
@@ -134,7 +137,7 @@ pipeline {
 
                             sh '''
                                 docker run --rm \
-                                  -v "/var/lib/docker/volumes/jenkins_home/_data/workspace/Pipeline_SCA_SNYK:/app" \
+                                  -v "$WORKSPACE_HOST:/app" \
                                   -w /app \
                                   "$NODE_IMAGE" \
                                   sh -c '
@@ -157,6 +160,57 @@ pipeline {
             }
         }
 
+        stage('Snyk Container Scan') {
+            steps {
+                script {
+                    withCredentials([
+                        string(
+                            credentialsId: 'snyk-token',
+                            variable: 'SNYK_TOKEN'
+                        )
+                    ]) {
+
+                        echo "Scanning local image: ${env.JUICE_SHOP_IMAGE}"
+
+                        int containerStatus = sh(
+                            returnStatus: true,
+                            script: '''
+                                set +x
+                                set +e
+
+                                docker run --rm \
+                                  -e SNYK_TOKEN \
+                                  -e DOCKER_HOST=unix:///var/run/docker.sock \
+                                  -v /var/run/docker.sock:/var/run/docker.sock \
+                                  -v "$WORKSPACE_HOST:/app" \
+                                  -w /app \
+                                  "$SNYK_IMAGE" \
+                                  snyk container test "$JUICE_SHOP_IMAGE" \
+                                  --severity-threshold=high \
+                                  --json-file-output=snyk-container-report.json \
+                                  > snyk-container-report.txt 2>&1
+
+                                scan_status=$?
+
+                                cat snyk-container-report.txt
+
+                                exit "$scan_status"
+                            '''
+                        )
+
+                        if (containerStatus == 0) {
+                            echo 'CONTAINER SCAN COMPLETED: No HIGH or CRITICAL vulnerabilities found.'
+                        } else if (containerStatus == 1) {
+                            echo 'CONTAINER VULNERABILITIES DETECTED: HIGH or CRITICAL findings exist.'
+                            echo 'Results will be archived for analysis.'
+                        } else {
+                            error("Snyk Container Scan failed. Exit code: ${containerStatus}")
+                        }
+                    }
+                }
+            }
+        }
+
         stage('Security Gate') {
             steps {
                 script {
@@ -167,7 +221,6 @@ pipeline {
                         )
                     ]) {
 
-                        // Block pipeline on all severity levels
                         int gateStatus = sh(
                             returnStatus: true,
                             script: '''
@@ -176,7 +229,7 @@ pipeline {
 
                                 docker run --rm \
                                   -e SNYK_TOKEN \
-                                  -v "/var/lib/docker/volumes/jenkins_home/_data/workspace/Pipeline_SCA_SNYK:/app" \
+                                  -v "$WORKSPACE_HOST:/app" \
                                   -w /app \
                                   "$SNYK_IMAGE" \
                                   snyk test \
@@ -207,7 +260,7 @@ pipeline {
     post {
         always {
             archiveArtifacts(
-                artifacts: 'snyk-report.txt,snyk-report.json,sbom.json,sbom-snyk.log,snyk-gate-report.txt',
+                artifacts: 'snyk-report.txt,snyk-report.json,sbom.json,sbom-snyk.log,snyk-container-report.txt,snyk-container-report.json,snyk-gate-report.txt',
                 allowEmptyArchive: true
             )
         }
